@@ -1,0 +1,192 @@
+---
+title: "correlatos"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, results = 'asis', warning = FALSE, message = FALSE)
+library(readxl)
+library(gtsummary)
+library(flextable)
+library(dplyr)
+library(apaTables)
+library(corrplot)
+library(psych)
+library(correlation)
+library(ellmer)
+```
+
+```{r}
+datos <- read_excel("datos_completos_.xlsx")
+esf_cog <- c("Media_Pupila", "Duracion_Prom_Global", "Tasa_parpadeo")#esfuerzo cognitivo
+exp_vis <- c("Tasa_Fijaciones", "Tasa_Sacadas", "Amplitud_Sacada", "Tiempo_Primer_Contacto") #exploración visomotora
+efi_estr <- c("Prop_Regresivas", "Variabilidad_pupila", "Variabilidad_latencia") #eficiencia estratégica
+eeg <- c("media_Gamma", "media_SupMU", "DesvEst_Gamma", "DesvEst_SupMU")
+columnas <- c(esf_cog, exp_vis, efi_estr, eeg)
+nombres <- paste0(columnas,"_z")
+datos[nombres] <- lapply(datos[columnas], scale)
+datos$Tasa_parpadeo_z <- datos$Tasa_parpadeo_z*(-1)
+datos$Tiempo_Primer_Contacto_z <- datos$Tiempo_Primer_Contacto_z*(-1)
+datos['Esfuerzo_cognitivo'] <- (datos$Media_Pupila_z + datos$Duracion_Prom_Global_z + datos$Tasa_parpadeo_z)/3
+datos['Velocidad_visomotora'] <- (datos$Tasa_Fijaciones_z + datos$Tasa_Sacadas_z + datos$Amplitud_Sacada_z + datos$Tiempo_Primer_Contacto_z)/4
+datos['Eficiencia_estrategica'] <- (datos$Prop_Regresivas_z + datos$Variabilidad_pupila_z + datos$Variabilidad_latencia_z)/3
+esf_cog_z <- c("Media_Pupila_z", "Duracion_Prom_Global_z", "Tasa_parpadeo_z")#esfuerzo cognitivo
+exp_vis_z <- c("Tasa_Fijaciones_z", "Tasa_Sacadas_z", "Amplitud_Sacada_z", "Tiempo_Primer_Contacto_z") #exploración visomotora
+efi_estr_z <- c("Prop_Regresivas_z", "Variabilidad_pupila_z", "Variabilidad_latencia_z") #eficiencia estratégica
+eeg_z <- c("media_Gamma_z", "media_SupMU_z", "DesvEst_Gamma_z", "DesvEst_SupMU_z")
+compuestos <- c('Esfuerzo_cognitivo', 'Velocidad_visomotora', 'Eficiencia_estrategica')
+```
+
+```{r}
+interpretar <- function(df, nombre_tabla, contexto=""){
+  chat <- chat_groq()
+  df_texto <- paste(capture.output(print(df)), collapse = '\n')
+  prompt <- paste0(
+    "Eres un psicómetra experto. Interpreta la siguiente tabla llamada '", nombre_tabla, "'.\n",
+    "Contexto del estudio: ", contexto, "\n\n",
+    "Datos de la tabla:\n", df_texto, "\n\n",
+    "Instrucciones:\n",
+    "1. genera exactamente un párrafo de máximo 8 lineas tipo artículo científico donde destaques los resultados de las correlaciones, indicando las variables que presentan una correlación, la fuerza de dicha correlación y su significancia. También menciona aquellas que no correlaciona y Proporciona ÚNICAMENTE el párrafo final formateado\n"
+  )
+  cat("### ", nombre_tabla, "\n\n")
+  # Intento de envío con reintento automático si aparece el error 429
+  exito <- FALSE
+  intentos <- 0
+  
+  while(!exito && intentos < 3) {
+    intentos <- intentos + 1
+    
+    res <- tryCatch({
+      respuesta <- chat$chat(prompt, echo = F)
+      cat(respuesta, "\n\n")
+      exito <- TRUE
+    }, error = function(e) {
+      if (grepl("429", e$message)) {
+        # Si da error de cuota, espera 45 segundos y reintenta
+        cat("*Cuota alcanzada. Esperando 45 segundos para reintentar...*\n\n")
+        Sys.sleep(45)
+      } else {
+        stop(e) # Si es otro error, detiene la ejecución
+      }
+    })
+  }
+  
+  # Pausa segura entre tablas exitosas (12 segundos = max 5 peticiones/minuto)
+  Sys.sleep(12)
+}
+```
+
+# Correlaciones Eye tracker y ToM en niños oyentes
+
+```{r}
+df <- list()
+oyentes <- datos[datos$Tipo_Participante==1,]
+tareas <- unique(oyentes$Tarea)
+for (i in tareas) {
+  Btarea <- oyentes[oyentes$Tarea==i,]
+  variables_com <- Btarea[,c('Respuesta', compuestos)]
+  names(variables_com) <- c('ToM', 'Esf. Cognitivo', 'Vel. Visomotora', 'Efc. Estratégica')
+  correlacion_general <- cor(variables_com, method = 'pearson', use = 'complete.obs')
+  tabla_correlacion <- as.data.frame(correlation(variables_com))
+  tabla_correlacion <- tabla_correlacion[, c('Parameter1', 'Parameter2', 'r', 'p')]
+  tabla_correlacion <- tabla_correlacion %>% mutate(p_format = ifelse(p<.001, '<0.001',sprintf("%.3f", p)),Significancia= case_when(p < .001 ~ "***",p < .01 ~ "**",p < .05 ~ "*",T ~ 'ns')) %>% rename('Variable 1' = Parameter1, 'Variable 2' = Parameter2, 'r(Pearson)' = r, 'p_valor' = p_format)
+  tabla1 <- flextable(tabla_correlacion) %>% colformat_double(digits = 3) %>%  autofit() %>% set_caption(paste('Tabla', i, 'Matriz de asociación Eye Tracker y ToM tarea', i, 'niños oyentes'))
+  flextable::flextable_to_rmd(tabla1)
+  cat("\n\n")
+  pairs.panels(variables_com, method = 'pearson', hist.col = 'lightblue', density = T, ellipses = T, stars = T, digits = 3)
+  cat("\n\n")
+  df[[i]] <- tabla_correlacion
+}
+```
+
+```{r}
+#for (j in tareas){
+  #interpretacion <- interpretar(df[j], paste("correlación tarea", j), "asociación entre tareas ToM y metrícas del Eye Tracker en niños oyentes")
+#}
+```
+
+# Correlaciones EEG y ToM en niños oyentes
+
+```{r}
+df <- list()
+for (i in tareas) {
+  Btarea <- oyentes[oyentes$Tarea==i,]
+  variables_eeg <- Btarea[,c('Respuesta', eeg_z)]
+  names(variables_eeg) <- c('ToM', 'Gamma', 'Supresión Mu', 'Desv. Gamma', 'Desv. Sup. Mu')
+  correlacion_general <- cor(variables_eeg, method = 'pearson', use = 'complete.obs')
+  tabla_correlacion <- as.data.frame(correlation(variables_eeg))
+  tabla_correlacion <- tabla_correlacion[, c('Parameter1', 'Parameter2', 'r', 'p')]
+  tabla_correlacion <- tabla_correlacion %>% mutate(p_format = ifelse(p<.001, '<0.001',sprintf("%.3f", p)),Significancia= case_when(p < .001 ~ "***",p < .01 ~ "**",p < .05 ~ "*",T ~ 'ns')) %>% rename('Variable 1' = Parameter1, 'Variable 2' = Parameter2, 'r(Pearson)' = r, 'p_valor' = p_format)
+  tabla1 <- flextable(tabla_correlacion) %>% colformat_double(digits = 3) %>%   autofit() %>% set_caption(paste('Tabla', i, 'Matriz de asociación Eye Tracker y ToM tarea', i, 'niños oyentes'))
+  flextable::flextable_to_rmd(tabla1)
+  cat("\n\n")
+  pairs.panels(variables_eeg, method = 'pearson', hist.col = 'lightblue', density = T, ellipses = T, stars = T, digits = 3)
+  cat("\n\n")
+  df[[i]] <- tabla_correlacion
+}
+```
+
+```{r}
+#for (j in tareas){
+  #interpretacion <- interpretar(df[j], paste("correlación tarea", j), "asociación entre tareas ToM y metrícas del electroencefalograma en niños oyentes")
+#}
+```
+
+# Correlaciones Eye Tracker y ToM en niños sordos
+
+```{r}
+df <- list()
+sordos <- datos[datos$Tipo_Participante==2,]
+for (i in tareas) {
+  Btarea <- sordos[sordos$Tarea==i,]
+  variables_com <- Btarea[,c('Respuesta', compuestos)]
+  names(variables_com) <- c('ToM', 'Esf. Cognitivo', 'Vel. Visomotora', 'Efc. Estratégica')
+  correlacion_general <- cor(variables_com, method = 'pearson', use = 'complete.obs')
+  tabla_correlacion <- as.data.frame(correlation(variables_com))
+  tabla_correlacion <- tabla_correlacion[, c('Parameter1', 'Parameter2', 'r', 'p')]
+  tabla_correlacion <- tabla_correlacion %>% mutate(r = round(r, 3), p_format = ifelse(p<.001, '<0.001',sprintf("%.3f", p)),Significancia= case_when(p < .001 ~ "***",p < .01 ~ "**",p < .05 ~ "*",T ~ 'ns')) %>% rename('Variable 1' = Parameter1, 'Variable 2' = Parameter2, 'r(Pearson)' = r, 'p_valor' = p_format)
+  tabla1 <- flextable(tabla_correlacion) %>% colformat_double(digits = 3) %>%   autofit() %>% set_caption(paste('Tabla', i, 'Matriz de asociación Eye Tracker y ToM tarea', i, 'niños sordos'))
+  flextable::flextable_to_rmd(tabla1)
+  cat("\n\n")
+  pairs.panels(variables_com, method = 'pearson', hist.col = 'lightblue', density = T, ellipses = T, stars = T, digits = 3)
+  cat("\n\n")
+  df[[i]] <- tabla_correlacion
+}
+```
+
+```{r}
+#for (j in tareas){
+  #interpretacion <- interpretar(df[j], paste("correlación tarea", j), "asociación entre tareas ToM y metrícas del Eye Tracker en niños sordos")
+#}
+```
+
+# Correlaciones EEG y ToM en niños sordos
+
+```{r}
+df <- list()
+for (i in tareas) {
+  Btarea <- sordos[sordos$Tarea==i,]
+  variables_eeg <- Btarea[,c('Respuesta', eeg_z)]
+  names(variables_eeg) <- c('ToM', 'Gamma', 'Supresión Mu', 'Desv. Gamma', 'Desv. Sup. Mu')
+  correlacion_general <- cor(variables_eeg, method = 'pearson', use = 'complete.obs')
+  tabla_correlacion <- as.data.frame(correlation(variables_eeg))
+  tabla_correlacion <- tabla_correlacion[, c('Parameter1', 'Parameter2', 'r', 'p')]
+  tabla_correlacion <- tabla_correlacion %>% mutate(r = round(r, 3), p_format = ifelse(p<.001, '<0.001',sprintf("%.3f", p)),Significancia= case_when(p < .001 ~ "***",p < .01 ~ "**",p < .05 ~ "*",T ~ 'ns')) %>% rename('Variable 1' = Parameter1, 'Variable 2' = Parameter2, 'r(Pearson)' = r, 'p_valor' = p_format)
+  tabla1 <- flextable(tabla_correlacion) %>% colformat_double(digits = 3) %>%   autofit() %>% set_caption(paste('Tabla', i, 'Matriz de asociación electroencefalograma y ToM tarea', i, 'niños sordos'))
+  flextable::flextable_to_rmd(tabla1)
+  cat("\n\n")
+  pairs.panels(variables_eeg, method = 'pearson', hist.col = 'lightblue', density = T, ellipses = T, stars = T, digits = 3)
+  cat("\n\n")
+  df[[i]] <- tabla_correlacion
+}
+```
+
+```{r}
+#for (j in tareas){
+  #interpretacion <- interpretar(df[j], paste("correlación tarea", j), "asociación entre tareas ToM y metrícas del electroencefalograma en niños sordos")
+#}
+```
+
