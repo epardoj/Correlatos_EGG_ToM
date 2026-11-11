@@ -122,3 +122,15 @@ automatizada mediante un modelo de lenguaje (`ellmer` / Groq).
   potencia de las correlaciones por grupo y tarea.
 
 ---
+
+## 🛠️ Requisitos
+
+El análisis se ejecuta en **R** con los siguientes paquetes:
+
+install.packages(c("readxl", "gtsummary", "flextable", "dplyr",
+                   "apaTables", "corrplot", "psych", "correlation", "ellmer"))
+
+## Licencia
+
+- El **código** de este repositorio (incluyendo `Correlatos.Rmd`) está bajo la licencia **MIT**.
+- Los **datos** (`datos_completos_.xlsx` y el diccionario de metadatos) están bajo la licencia **Creative Commons Attribution 4.0 International (CC BY 4.0)**.
